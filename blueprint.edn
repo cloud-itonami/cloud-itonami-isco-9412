@@ -1,0 +1,10 @@
+{:itonami.blueprint/id "cloud-itonami-isco-9412"
+ :itonami.blueprint/name "Independent Kitchen Support Practice"
+ :itonami.blueprint/isco-08 "9412"
+ :itonami.blueprint/domain :services/kitchen-support
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:local-jobs :food-safety :worker-safety]
+ :itonami.blueprint/governor :kitchen-support-governor
+ :itonami.blueprint/robotics true
+ :itonami.blueprint/required-technologies [:robotics :forms :audit-ledger]
+ :itonami.blueprint/status :public-oss}
