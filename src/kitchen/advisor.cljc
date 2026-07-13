@@ -1,0 +1,60 @@
+(ns kitchen.advisor
+  "KitchenAdvisor — the advisor named in this repository's README,
+  proposing a kitchen operation (approve a kitchen task, approve
+  hot-surface proximity, approve sharp-tool zone entry) from a
+  kitchen schedule, food-safety checklist and supply order. Swappable
+  mock/llm; the advisor ONLY proposes — `kitchen.governor` checks the
+  sanitize-temperature band and restock ceiling independently and
+  always escalates hot-surface/sharp-tool decisions. Modeled on
+  cloud-itonami-isco-4311's advisor.
+
+  A proposal: {:op :approve-kitchen-task|:approve-hot-surface-proximity|:approve-sharp-tool-zone-entry
+               :effect :propose :kitchen-id str :sanitize-temp-c number
+               :restock-quantity number :stake kw :confidence n
+               :rationale str}")
+
+(defprotocol Advisor
+  (-advise [advisor store request] "request -> proposal map"))
+
+(defn- infer [_store {:keys [op stake kitchen-id sanitize-temp-c restock-quantity] :as request}]
+  {:op op
+   :effect :propose
+   :kitchen-id kitchen-id
+   :sanitize-temp-c sanitize-temp-c
+   :restock-quantity restock-quantity
+   :stake (or stake :low)
+   :confidence (case (or stake :low) :high 0.7 :medium 0.85 :low 0.95)
+   :rationale (str "proposed " (name op) " for client " (:client-id request))})
+
+(defn mock-advisor []
+  (reify Advisor
+    (-advise [_ store request] (infer store request))))
+
+(def ^:private system-prompt
+  "You are a kitchen-support advisor. Given a request, propose an
+   :op, the :kitchen-id, :sanitize-temp-c and :restock-quantity, an
+   honest :confidence and a :stake. Never call an out-of-band sanitize
+   temperature or an over-ceiling restock conforming — the governor
+   checks both against the registered kitchen record. Hot-surface-
+   proximity and sharp-tool-zone decisions always require human
+   sign-off regardless of confidence.")
+
+(defn- parse-proposal [content]
+  (try
+    (let [p (read-string content)]
+      (if (map? p)
+        (assoc p :effect :propose)
+        {:op :unknown :effect :propose :confidence 0.0 :stake :high
+         :rationale "unparseable LLM response"}))
+    (catch #?(:clj Exception :cljs js/Error) _
+      {:op :unknown :effect :propose :confidence 0.0 :stake :high
+       :rationale "LLM response parse failure"})))
+
+(defn llm-advisor
+  [chat-model model-generate-fn gen-opts]
+  (reify Advisor
+    (-advise [_ _store request]
+      (let [msgs [{:role :system :content system-prompt}
+                  {:role :user :content (str "operation request: " (pr-str request))}]
+            resp (model-generate-fn chat-model msgs gen-opts)]
+        (parse-proposal (:content resp))))))

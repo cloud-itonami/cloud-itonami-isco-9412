@@ -1,0 +1,93 @@
+(ns kitchen.governor-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [kitchen.store :as store]
+            [kitchen.governor :as governor]))
+
+(defn- fresh-store []
+  (let [st (store/mem-store)]
+    (store/register-client! st {:client-id "client-1" :name "Kobo Kitchens"})
+    (store/register-kitchen! st {:kitchen-id "K-1" :client-id "client-1"
+                                 :name "kitchen-042"
+                                 :min-sanitize-temp-c 60
+                                 :max-sanitize-temp-c 82
+                                 :max-restock-quantity 200})
+    st))
+
+(defn- task-op [sanitize-temp restock-qty]
+  {:op :approve-kitchen-task :effect :propose :kitchen-id "K-1"
+   :sanitize-temp-c sanitize-temp :restock-quantity restock-qty
+   :confidence 0.9 :stake :low})
+
+(def ^:private req {:client-id "client-1"})
+
+(deftest ok-within-band-and-ceiling
+  (let [st (fresh-store)
+        v (governor/check req {} (task-op 70 100) st)]
+    (is (:ok? v))))
+
+(deftest ok-at-exact-boundary-edges
+  (testing "the sanitize-temperature band and restock ceiling are inclusive"
+    (let [st (fresh-store)]
+      (is (:ok? (governor/check req {} (task-op 60 200) st)))
+      (is (:ok? (governor/check req {} (task-op 82 200) st))))))
+
+(deftest hard-on-sanitize-temp-out-of-band
+  (testing "sanitizing water temperature is a food-safety spec, not a feel test"
+    (let [st (fresh-store)
+          v (governor/check req {} (assoc (task-op 40 100) :confidence 0.99) st)]
+      (is (:hard? v))
+      (is (some #(= :sanitize-temp-out-of-band (:rule %)) (:violations v))))))
+
+(deftest hard-on-restock-exceeds-ceiling
+  (testing "over-ordering beyond registered capacity is a storage risk, not thrift"
+    (let [st (fresh-store)
+          v (governor/check req {} (assoc (task-op 70 500) :confidence 0.99) st)]
+      (is (:hard? v))
+      (is (some #(= :restock-exceeds-ceiling (:rule %)) (:violations v))))))
+
+(deftest hard-on-unknown-kitchen
+  (let [st (fresh-store)
+        v (governor/check req {} (assoc (task-op 70 100) :kitchen-id "K-ghost") st)]
+    (is (:hard? v))
+    (is (some #(= :unknown-kitchen (:rule %)) (:violations v)))))
+
+(deftest hard-on-foreign-kitchen
+  (let [st (fresh-store)]
+    (store/register-client! st {:client-id "client-2" :name "Other"})
+    (let [v (governor/check {:client-id "client-2"} {} (task-op 70 100) st)]
+      (is (:hard? v))
+      (is (some #(= :kitchen-wrong-client (:rule %)) (:violations v))))))
+
+(deftest hard-on-unregistered-client
+  (let [st (fresh-store)
+        v (governor/check {:client-id "nobody"} {} (task-op 70 100) st)]
+    (is (:hard? v))
+    (is (some #(= :no-client (:rule %)) (:violations v)))))
+
+(deftest hard-on-no-actuation-violation
+  (let [st (fresh-store)
+        v (governor/check req {} (assoc (task-op 70 100) :effect :direct-write) st)]
+    (is (:hard? v))
+    (is (some #(= :no-actuation (:rule %)) (:violations v)))))
+
+(deftest always-escalates-hot-surface-proximity-even-at-high-confidence
+  (testing "no robot operation near hot surfaces/open flames without the governor gate"
+    (let [st (fresh-store)
+          v (governor/check req {} {:op :approve-hot-surface-proximity :effect :propose
+                                    :kitchen-id "K-1" :confidence 0.99 :stake :low} st)]
+      (is (not (:hard? v)))
+      (is (:escalate? v)))))
+
+(deftest always-escalates-sharp-tool-zone-entry-even-at-high-confidence
+  (testing "sharp-tool zones require human sign-off"
+    (let [st (fresh-store)
+          v (governor/check req {} {:op :approve-sharp-tool-zone-entry :effect :propose
+                                    :kitchen-id "K-1" :confidence 0.99 :stake :low} st)]
+      (is (not (:hard? v)))
+      (is (:escalate? v)))))
+
+(deftest escalates-low-confidence
+  (let [st (fresh-store)
+        v (governor/check req {} (assoc (task-op 70 100) :confidence 0.3) st)]
+    (is (not (:hard? v)))
+    (is (:escalate? v))))
