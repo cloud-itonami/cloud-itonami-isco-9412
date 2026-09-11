@@ -11,7 +11,7 @@ independent `KitchenSupportGovernor` (`kitchen.governor`), following the
 itonami actor pattern (ADR-2607011000): `:intake -> :advise -> :govern ->
 :decide -+-> :commit (:ok?) +-> :request-approval (:escalate?, human-in-the-loop
 interrupt) +-> :hold (:hard?)`. 14 tests / 30 assertions green
-(`clojure -M:test`). HARD invariants (always hold, never overridable):
+(`kbb -M:test`). HARD invariants (always hold, never overridable):
 client provenance, no-actuation (`:effect` must be `:propose`), a registered
 kitchen basis for any task, the proposed sanitize temperature falling inside
 the kitchen's registered food-safety band (sanitizing water temperature is a
