@@ -1,5 +1,5 @@
 (ns kitchen.governor-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kitchen.store :as store]
             [kitchen.governor :as governor]))
 
